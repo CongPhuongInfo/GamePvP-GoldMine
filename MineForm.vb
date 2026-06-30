@@ -65,7 +65,8 @@ Public Class MineForm
             itemSprites(GoldMineGame.ItemKind.Rock) = LoadImg(dir, "rock.png")
             itemSprites(GoldMineGame.ItemKind.DiamondSmall) = LoadImg(dir, "diamond_small.png")
             itemSprites(GoldMineGame.ItemKind.DiamondLarge) = LoadImg(dir, "diamond_large.png")
-            itemSprites(GoldMineGame.ItemKind.TNT) = LoadImg(dir, "tnt.png")
+            itemSprites(GoldMineGame.ItemKind.TNT) = LoadImg(dir, "firecracker.png")
+            itemSprites(GoldMineGame.ItemKind.ExplosiveBox) = LoadImg(dir, "tnt.png")
             itemSprites(GoldMineGame.ItemKind.MoneyBag) = LoadImg(dir, "moneybag.png")
             itemSprites(GoldMineGame.ItemKind.ClockBonus) = LoadImg(dir, "clock.png")
             itemSprites(GoldMineGame.ItemKind.MagnetBonus) = LoadImg(dir, "magnet.png")
@@ -398,6 +399,24 @@ Public Class MineForm
                 Integer.TryParse(line.Substring(5), pIdx)
                 game.FireHook(pIdx)
             End If
+
+        ElseIf line.StartsWith("MOVE:") Then
+            If isHost Then
+                Dim parts() As String = line.Substring(5).Split(":"c)
+                If parts.Length = 2 Then
+                    Dim pIdx As Integer, dir As Integer
+                    Integer.TryParse(parts(0), pIdx)
+                    Integer.TryParse(parts(1), dir)
+                    game.MoveBase(pIdx, dir)
+                End If
+            End If
+
+        ElseIf line.StartsWith("BOMB:") Then
+            If isHost Then
+                Dim pIdx As Integer
+                Integer.TryParse(line.Substring(5), pIdx)
+                game.UseBomb(pIdx)
+            End If
         End If
     End Sub
 
@@ -527,9 +546,9 @@ Public Class MineForm
         lblTime.ForeColor = If(secLeft <= 10, Color.OrangeRed, Color.White)
         lblLevel.Text = "Man " & game.Level.ToString() & "/" & GoldMineGame.MAX_LEVEL.ToString() & "   Muc tieu: " & game.TargetScore.ToString()
 
-        lblScore0.Text = "Player 1: " & game.PlayerScore(0).ToString() & " diem"
+        lblScore0.Text = "Player 1: " & game.PlayerScore(0).ToString() & " diem   |  Phao: " & game.PlayerBombs(0).ToString()
         If playerCount = 2 Then
-            lblScore1.Text = "Player 2: " & game.PlayerScore(1).ToString() & " diem"
+            lblScore1.Text = "Player 2: " & game.PlayerScore(1).ToString() & " diem   |  Phao: " & game.PlayerBombs(1).ToString()
             lblScore1.Visible = True
         Else
             lblScore1.Visible = False
@@ -540,6 +559,37 @@ Public Class MineForm
     ' ============================================================
     '  INPUT
     ' ============================================================
+    ' WinForms mac dinh coi phim mui ten la "dialog navigation key" va Panel se nuot mat
+    ' truoc khi toi duoc Form_KeyDown, du da bat KeyPreview = True.
+    ' Override ProcessCmdKey de chan bat truoc, dam bao Left/Right luon di chuyen duoc nhan vat.
+    Protected Overrides Function ProcessCmdKey(ByRef msg As Message, keyData As Keys) As Boolean
+        If game IsNot Nothing AndAlso Not game.GameOver Then
+            If keyData = Keys.Left Then
+                DoMove(0, -1)
+                Return True
+            ElseIf keyData = Keys.Right Then
+                DoMove(0, 1)
+                Return True
+            ElseIf keyData = Keys.Down Then
+                DoFire(0)
+                Return True
+            ElseIf keyData = Keys.Up Then
+                DoUseBomb(0)
+                Return True
+            ElseIf keyData = Keys.A AndAlso playerCount = 2 Then
+                DoMove(1, -1)
+                Return True
+            ElseIf keyData = Keys.D AndAlso playerCount = 2 Then
+                DoMove(1, 1)
+                Return True
+            ElseIf keyData = Keys.W AndAlso playerCount = 2 Then
+                DoUseBomb(1)
+                Return True
+            End If
+        End If
+        Return MyBase.ProcessCmdKey(msg, keyData)
+    End Function
+
     Private Sub MineForm_KeyDown(sender As Object, e As KeyEventArgs)
         If game Is Nothing OrElse game.GameOver Then Return
         If e.KeyCode = Keys.Space Then
@@ -565,6 +615,38 @@ Public Class MineForm
             End If
         Else
             game.FireHook(player)
+        End If
+    End Sub
+
+    ' Goi khi nguoi choi bam Trai/Phai: offline xu ly truc tiep, online gui lenh ve host
+    Private Sub DoMove(player As Integer, dir As Integer)
+        If isOnlineMode Then
+            If player <> localPlayer Then Return   ' chi dieu khien duoc nhan vat cua chinh minh
+            If isHost Then
+                game.MoveBase(player, dir)
+                boardPanel.Invalidate()
+            Else
+                peer.SendLine("MOVE:" & player.ToString() & ":" & dir.ToString())
+            End If
+        Else
+            game.MoveBase(player, dir)
+            boardPanel.Invalidate()
+        End If
+    End Sub
+
+    ' Goi khi nguoi choi bam mui ten LEN: dung phao pha da. offline xu ly truc tiep, online gui lenh ve host
+    Private Sub DoUseBomb(player As Integer)
+        If isOnlineMode Then
+            If player <> localPlayer Then Return
+            If isHost Then
+                game.UseBomb(player)
+                boardPanel.Invalidate()
+            Else
+                peer.SendLine("BOMB:" & player.ToString())
+            End If
+        Else
+            game.UseBomb(player)
+            boardPanel.Invalidate()
         End If
     End Sub
 
@@ -637,13 +719,23 @@ Public Class MineForm
         Dim tipX As Single = game.GetHookTipX(p)
         Dim tipY As Single = game.GetHookTipY(p)
 
-        Using pivotBrush As New SolidBrush(col)
-            g.FillEllipse(pivotBrush, baseX - 8, baseY - 8, 16, 16)
-        End Using
+        ' Khi dang du (chua tha), ve them duong ngam cham cham theo huong hien tai
+        ' de nguoi choi de canh muc tieu truoc khi bam tha moc.
+        If game.HookState_(p) = GoldMineGame.HookState.Swinging Then
+            Dim guideLen As Single = 360.0!
+            Dim gx As Single = baseX + guideLen * CSng(Math.Sin(game.HookAngle(p)))
+            Dim gy As Single = baseY + guideLen * CSng(Math.Cos(game.HookAngle(p)))
+            Using guidePen As New Pen(Color.FromArgb(140, col), 1.5!)
+                guidePen.DashStyle = DashStyle.Dash
+                g.DrawLine(guidePen, baseX, baseY, gx, gy)
+            End Using
+        End If
 
         Using ropePen As New Pen(col, 2.5!)
             g.DrawLine(ropePen, baseX, baseY, tipX, tipY)
         End Using
+
+        DrawMiner(g, baseX, baseY, col)
 
         If spritesLoaded AndAlso clawSprite IsNot Nothing Then
             Dim angleDeg As Single = game.HookAngle(p) * 180.0F / CSng(Math.PI)
@@ -657,6 +749,52 @@ Public Class MineForm
                 g.FillEllipse(clawBrush, tipX - 7, tipY - 7, 14, 14)
             End Using
         End If
+    End Sub
+
+    ' Ve nhan vat (tho dao vang) dung tren mat dat, tay vuon ra cam day moc
+    Private Sub DrawMiner(g As Graphics, standX As Single, ropeY As Single, shirtCol As Color)
+        Dim feetY As Single = ropeY + 4
+        Dim headR As Single = 9.0!
+        Dim headCx As Single = standX
+        Dim headCy As Single = feetY - 30
+        Dim shoulderY As Single = headCy + headR + 2
+
+        ' chan (2 que)
+        Using legPen As New Pen(Color.FromArgb(60, 45, 35), 4.0!)
+            g.DrawLine(legPen, standX - 4, feetY - 14, standX - 6, feetY)
+            g.DrawLine(legPen, standX + 4, feetY - 14, standX + 6, feetY)
+        End Using
+
+        ' than ao
+        Dim bodyRect As New RectangleF(standX - 8, shoulderY, 16, feetY - 14 - shoulderY)
+        Using bodyBrush As New SolidBrush(shirtCol)
+            g.FillRectangle(bodyBrush, bodyRect)
+        End Using
+        Using bodyPen As New Pen(Color.FromArgb(40, 40, 40), 1.2!)
+            g.DrawRectangle(bodyPen, Rectangle.Round(bodyRect))
+        End Using
+
+        ' canh tay vuon toi day moc
+        Using armPen As New Pen(Color.FromArgb(255, 214, 170), 3.5!)
+            g.DrawLine(armPen, standX, shoulderY + 3, standX, ropeY)
+        End Using
+
+        ' dau (mau da) + non bao ho
+        Using skinBrush As New SolidBrush(Color.FromArgb(255, 214, 170))
+            g.FillEllipse(skinBrush, headCx - headR, headCy - headR, headR * 2, headR * 2)
+        End Using
+        Using helmetBrush As New SolidBrush(Color.FromArgb(230, 190, 30))
+            g.FillPie(helmetBrush, headCx - headR - 1, headCy - headR - 1, headR * 2 + 2, headR * 2 + 2, 180, 180)
+            g.FillRectangle(helmetBrush, headCx - headR - 1, headCy - 1, headR * 2 + 2, 2)
+        End Using
+        Using outlinePen As New Pen(Color.FromArgb(60, 45, 10), 1.0!)
+            g.DrawEllipse(outlinePen, headCx - headR, headCy - headR, headR * 2, headR * 2)
+        End Using
+        ' mat
+        Using eyeBrush As New SolidBrush(Color.FromArgb(40, 30, 20))
+            g.FillEllipse(eyeBrush, headCx - 3.5F, headCy + 0.5F, 2.2F, 2.2F)
+            g.FillEllipse(eyeBrush, headCx + 1.3F, headCy + 0.5F, 2.2F, 2.2F)
+        End Using
     End Sub
 
     Private Sub DrawItem(g As Graphics, it As GoldMineGame.MineItem)
@@ -682,6 +820,8 @@ Public Class MineForm
             Case GoldMineGame.ItemKind.DiamondSmall, GoldMineGame.ItemKind.DiamondLarge
                 Using b As New SolidBrush(Color.Aqua) : g.FillEllipse(b, x, y, d, d) : End Using
             Case GoldMineGame.ItemKind.TNT
+                Using b As New SolidBrush(Color.OrangeRed) : g.FillRectangle(b, x, y, d, d) : End Using
+            Case GoldMineGame.ItemKind.ExplosiveBox
                 Using b As New SolidBrush(Color.Firebrick) : g.FillRectangle(b, x, y, d, d) : End Using
             Case Else
                 Using b As New SolidBrush(Color.White) : g.FillEllipse(b, x, y, d, d) : End Using

@@ -27,6 +27,7 @@ Public Class GoldMineGame
         ClockBonus = 9
         MagnetBonus = 10
         StrengthBonus = 11
+        ExplosiveBox = 12
     End Enum
 
     Public Enum HookState As Byte
@@ -64,11 +65,16 @@ Public Class GoldMineGame
     Public HookedItemIndex(MAX_PLAYERS - 1) As Integer
     Public PlayerScore(MAX_PLAYERS - 1) As Integer
     Public PlayerStrengthTimer(MAX_PLAYERS - 1) As Integer
+    Public PlayerBombs(MAX_PLAYERS - 1) As Integer
     Public PlayerActive(MAX_PLAYERS - 1) As Boolean
 
     Public PlayerCount As Integer = 1
 
-    Public Const SWING_SPEED As Single = 0.028!
+    Public Const BASE_MOVE_SPEED As Single = 4.5!
+    Public Const BASE_MIN_X As Single = 40.0!
+    Public Const BASE_MAX_X As Single = MINE_WIDTH - 40.0!
+
+    Public Const SWING_SPEED As Single = 0.019!
     Public Const MIN_ANGLE As Single = -1.45!
     Public Const MAX_ANGLE As Single = 1.45!
     Public Const EXTEND_SPEED As Single = 9.0!
@@ -111,6 +117,7 @@ Public Class GoldMineGame
             PlayerActive(i) = (i < PlayerCount)
             PlayerScore(i) = 0
             PlayerStrengthTimer(i) = 0
+            PlayerBombs(i) = 0
             HookState_(i) = HookState.Swinging
             HookAngle(i) = 0
             HookAngleDir(i) = 1
@@ -158,14 +165,34 @@ Public Class GoldMineGame
         For i = 1 To count
             Items.Add(MakeRandomItem())
         Next i
+
+        ' Phao no: chi xuat hien gioi han 1 hoac 2 qua moi man, khong tu sinh lai
+        Dim bombCount As Integer = rng.Next(1, 3)   ' 1 hoac 2
+        For i = 1 To bombCount
+            Items.Add(MakeTntItem())
+        Next i
     End Sub
+
+    Private Function MakeTntItem() As MineItem
+        Dim it As New MineItem()
+        it.Kind = ItemKind.TNT : it.Radius = 16 : it.Weight = 1.0! : it.Value = 0
+        Dim tries As Integer = 0
+        Do
+            it.X = CSng(rng.Next(CInt(it.Radius) + 10, MINE_WIDTH - CInt(it.Radius) - 10))
+            it.Y = CSng(rng.Next(SURFACE_Y + 60, MINE_HEIGHT - CInt(it.Radius) - 10))
+            tries += 1
+        Loop While tries < 20 AndAlso IsOverlapping(it)
+        it.Active = True
+        it.Flying = False
+        Return it
+    End Function
 
     Private Function MakeRandomItem() As MineItem
         Dim it As New MineItem()
         Dim roll As Integer = rng.Next(100)
         ' Cang len man cao, vang nho/da/tnt xuat hien nhieu hon, vang to/kim cuong hiem hon
         Dim rockBonus As Integer = (Level - 1) * 6      ' +6%/+12% o man 2/3
-        Dim tntBonus As Integer = (Level - 1) * 3
+        Dim boxBonus As Integer = (Level - 1) * 3
         If roll < 28 - (Level - 1) * 3 Then
             it.Kind = ItemKind.GoldSmall : it.Radius = 14 : it.Weight = 1.0! : it.Value = 50
         ElseIf roll < 48 - (Level - 1) * 4 Then
@@ -178,13 +205,13 @@ Public Class GoldMineGame
             it.Kind = ItemKind.DiamondSmall : it.Radius = 12 : it.Weight = 0.6! : it.Value = 200
         ElseIf roll < 90 + rockBonus Then
             it.Kind = ItemKind.DiamondLarge : it.Radius = 18 : it.Weight = 1.2! : it.Value = 500
-        ElseIf roll < 94 + rockBonus + tntBonus Then
-            it.Kind = ItemKind.TNT : it.Radius = 16 : it.Weight = 1.0! : it.Value = 30
-        ElseIf roll < 97 + rockBonus + tntBonus Then
+        ElseIf roll < 94 + rockBonus + boxBonus Then
+            it.Kind = ItemKind.ExplosiveBox : it.Radius = 16 : it.Weight = 1.0! : it.Value = 0
+        ElseIf roll < 97 + rockBonus + boxBonus Then
             it.Kind = ItemKind.MoneyBag : it.Radius = 16 : it.Weight = 1.5! : it.Value = 150
-        ElseIf roll < 98 + rockBonus + tntBonus Then
+        ElseIf roll < 98 + rockBonus + boxBonus Then
             it.Kind = ItemKind.ClockBonus : it.Radius = 14 : it.Weight = 0.5! : it.Value = 0
-        ElseIf roll < 99 + rockBonus + tntBonus Then
+        ElseIf roll < 99 + rockBonus + boxBonus Then
             it.Kind = ItemKind.MagnetBonus : it.Radius = 14 : it.Weight = 0.5! : it.Value = 0
         Else
             it.Kind = ItemKind.StrengthBonus : it.Radius = 14 : it.Weight = 0.5! : it.Value = 0
@@ -220,6 +247,19 @@ Public Class GoldMineGame
         If player < 0 OrElse player >= MAX_PLAYERS OrElse Not PlayerActive(player) Then Return False
         If HookState_(player) <> HookState.Swinging Then Return False
         HookState_(player) = HookState.Extending
+        Return True
+    End Function
+
+    ' Goi khi nguoi choi bam Trai/Phai de di chuyen nhan vat sang ben do
+    ' dir = -1 (trai) hoac +1 (phai). Chi di chuyen duoc khi moc dang dung yen (Swinging).
+    Public Function MoveBase(player As Integer, dir As Integer) As Boolean
+        If GameOver Then Return False
+        If player < 0 OrElse player >= MAX_PLAYERS OrElse Not PlayerActive(player) Then Return False
+        If HookState_(player) <> HookState.Swinging Then Return False
+        Dim nx As Single = HookBaseX(player) + dir * BASE_MOVE_SPEED
+        If nx < BASE_MIN_X Then nx = BASE_MIN_X
+        If nx > BASE_MAX_X Then nx = BASE_MAX_X
+        HookBaseX(player) = nx
         Return True
     End Function
 
@@ -267,7 +307,7 @@ Public Class GoldMineGame
 
                 Dim hitIndex As Integer = FindItemAt(tipX, tipY)
                 If hitIndex >= 0 Then
-                    If Items(hitIndex).Kind = ItemKind.TNT Then
+                    If Items(hitIndex).Kind = ItemKind.ExplosiveBox Then
                         ExplodeItem(hitIndex)
                         HookedItemIndex(p) = -1
                         HookState_(p) = HookState.Retracting
@@ -339,6 +379,9 @@ Public Class GoldMineGame
             Case ItemKind.Skull
                 PlayerScore(p) = Math.Max(0, PlayerScore(p) - 50)
                 LastLog = "Player " & (p + 1).ToString() & " trung Dau Lau, -50 diem!"
+            Case ItemKind.TNT
+                PlayerBombs(p) += 1
+                LastLog = "Player " & (p + 1).ToString() & " nhat duoc Phao no! Bam mui ten LEN de dung pha da dang keo."
             Case Else
                 PlayerScore(p) += it.Value
                 LastLog = String.Format("Player {0} thu duoc {1}, +{2} diem!", p + 1, ItemName(it.Kind), it.Value)
@@ -363,6 +406,7 @@ Public Class GoldMineGame
             Case ItemKind.DiamondSmall : Return "kim cuong nho"
             Case ItemKind.DiamondLarge : Return "kim cuong to"
             Case ItemKind.MoneyBag : Return "tui tien"
+            Case ItemKind.ExplosiveBox : Return "thung thuoc no"
             Case Else : Return "vat pham"
         End Select
     End Function
@@ -480,6 +524,36 @@ Public Class GoldMineGame
         End If
     End Function
 
+    ' Goi khi nguoi choi bam mui ten LEN: dung 1 qua phao trong tui de pha huy
+    ' vat dang bi moc keo ve, neu do la DA (Rock). Khong dung duoc voi vang/kim cuong...
+    Public Function UseBomb(player As Integer) As Boolean
+        If GameOver Then Return False
+        If player < 0 OrElse player >= MAX_PLAYERS OrElse Not PlayerActive(player) Then Return False
+        If PlayerBombs(player) <= 0 Then Return False
+        If HookState_(player) <> HookState.Retracting Then Return False
+        Dim idx As Integer = HookedItemIndex(player)
+        If idx < 0 OrElse idx >= Items.Count Then Return False
+        If Items(idx).Kind <> ItemKind.Rock Then Return False
+
+        PlayerBombs(player) -= 1
+        Dim center As MineItem = Items(idx)
+        Dim fx As New ExplosionFx()
+        fx.X = center.X : fx.Y = center.Y : fx.Timer = 15
+        Explosions.Add(fx)
+
+        Items.RemoveAt(idx)
+        Items.Add(MakeRandomItem())
+
+        Dim other As Integer
+        For other = 0 To MAX_PLAYERS - 1
+            If HookedItemIndex(other) = idx Then HookedItemIndex(other) = -1
+            If HookedItemIndex(other) > idx Then HookedItemIndex(other) -= 1
+        Next other
+
+        LastLog = "Player " & (player + 1).ToString() & " dung Phao pha tan tang da!"
+        Return True
+    End Function
+
     Public Function GetHookTipX(p As Integer) As Single
         Return HookBaseX(p) + HookLength(p) * CSng(Math.Sin(HookAngle(p)))
     End Function
@@ -514,7 +588,8 @@ Public Class GoldMineGame
             sb.Append(CInt(HookState_(p)).ToString()) : sb.Append(",")
             sb.Append(HookedItemIndex(p).ToString()) : sb.Append(",")
             sb.Append(PlayerScore(p).ToString()) : sb.Append(",")
-            sb.Append(PlayerStrengthTimer(p).ToString())
+            sb.Append(PlayerStrengthTimer(p).ToString()) : sb.Append(",")
+            sb.Append(PlayerBombs(p).ToString())
             If p < MAX_PLAYERS - 1 Then sb.Append(";")
         Next p
         sb.Append("|")
@@ -577,6 +652,7 @@ Public Class GoldMineGame
                 Integer.TryParse(hp(7), HookedItemIndex(p))
                 Integer.TryParse(hp(8), PlayerScore(p))
                 Integer.TryParse(hp(9), PlayerStrengthTimer(p))
+                If hp.Length >= 11 Then Integer.TryParse(hp(10), PlayerBombs(p))
             End If
         Next p
 
