@@ -18,6 +18,7 @@ Public Class MineForm
     Private gameTimer As System.Windows.Forms.Timer
     Private playerCount As Integer = 1
     Private startLevel As Integer = 1
+    Private lastLogShown As String = ""
 
     ' === Mang (PvP Online) ===
     Private peer As NetworkPeer
@@ -36,10 +37,20 @@ Public Class MineForm
     Private boardPanel As DoubleBufferedPanel
     Private lblTime As Label
     Private lblLevel As Label
-    Private lblScore0 As Label
-    Private lblScore1 As Label
     Private lblLog As Label
     Private btnRestart As Button
+
+    ' === Player card panels (giong kieu Form1.vb/TankGame.vb) ===
+    Private pnlCard0 As Panel
+    Private pnlCard1 As Panel
+    Private lblCard0Stats As Label
+    Private lblCard1Stats As Label
+
+    ' === Khung chat (hien khi 2 nguoi choi - offline 2P hoac Online PvP) ===
+    Private pnlChat As Panel
+    Private lstChat As ListBox
+    Private txtChatInput As TextBox
+    Private btnSend As Button
 
     ' === Sprite ===
     Private itemSprites As New Dictionary(Of GoldMineGame.ItemKind, Image)()
@@ -116,10 +127,22 @@ Public Class MineForm
         boardPanel.Visible = v
         lblTime.Visible = v
         lblLevel.Visible = v
-        lblScore0.Visible = v
-        lblScore1.Visible = v AndAlso playerCount = 2
-        lblLog.Visible = v
+        pnlCard0.Visible = v
         btnRestart.Visible = v
+        If Not v Then lstChat.Items.Clear()
+        UpdatePvpPanelsVisible()
+    End Sub
+
+    ' Hien/an the Player 2 + khung chat (thay cho viec chi gan 1 lan trong SetGameControlsVisible).
+    ' Goi lai moi lan RefreshSide() de tu dong "chua lanh" neu lan dau bi lech thoi diem
+    ' (vi du: goi STATE dau tien tu mang toi truoc/sau khi bien playerCount cuc bo kip cap nhat).
+    Private Sub UpdatePvpPanelsVisible()
+        Dim isTwoPlayer As Boolean = (playerCount = 2) OrElse isOnlineMode
+        Dim v As Boolean = boardPanel.Visible
+        pnlCard1.Visible = v AndAlso isTwoPlayer
+        Dim showChat As Boolean = v AndAlso isTwoPlayer
+        pnlChat.Visible = showChat
+        lblLog.Visible = v AndAlso Not showChat
     End Sub
 
     ' ============================================================
@@ -372,6 +395,7 @@ Public Class MineForm
         If line.StartsWith("HELLO") Then
             If isHost Then
                 playerCount = 2
+                lastLogShown = ""
                 game = New GoldMineGame()
                 game.ResetGame(2, 1)
                 ShowGamePanel()
@@ -417,6 +441,15 @@ Public Class MineForm
                 Integer.TryParse(line.Substring(5), pIdx)
                 game.UseBomb(pIdx)
             End If
+
+        ElseIf line.StartsWith("CHAT:") Then
+            Dim payload As String = line.Substring(5)
+            Dim colon As Integer = payload.IndexOf(":"c)
+            If colon >= 0 Then
+                Dim tag As String = payload.Substring(0, colon)
+                Dim msg As String = payload.Substring(colon + 1)
+                AppendChat(tag & ": " & msg)
+            End If
         End If
     End Sub
 
@@ -454,26 +487,23 @@ Public Class MineForm
         lblTime.Location = New Point(GoldMineGame.MINE_WIDTH + 30, 45)
         Me.Controls.Add(lblTime)
 
-        lblScore0 = New Label()
-        lblScore0.Font = New Font("Segoe UI", 13.0!, FontStyle.Bold)
-        lblScore0.ForeColor = Color.Gold
-        lblScore0.AutoSize = True
-        lblScore0.Location = New Point(GoldMineGame.MINE_WIDTH + 30, 95)
-        Me.Controls.Add(lblScore0)
+        Dim cardX As Integer = GoldMineGame.MINE_WIDTH + 20
+        Dim cardW As Integer = SIDE_W - 40
 
-        lblScore1 = New Label()
-        lblScore1.Font = New Font("Segoe UI", 13.0!, FontStyle.Bold)
-        lblScore1.ForeColor = Color.LightSkyBlue
-        lblScore1.AutoSize = True
-        lblScore1.Location = New Point(GoldMineGame.MINE_WIDTH + 30, 125)
-        Me.Controls.Add(lblScore1)
+        pnlCard0 = BuildPlayerCard("PLAYER 1", Color.Gold, New Point(cardX, 95), cardW, lblCard0Stats)
+        Me.Controls.Add(pnlCard0)
+
+        pnlCard1 = BuildPlayerCard("PLAYER 2", Color.LightSkyBlue, New Point(cardX, 161), cardW, lblCard1Stats)
+        Me.Controls.Add(pnlCard1)
 
         lblLog = New Label()
         lblLog.Font = New Font("Segoe UI", 9.5!)
         lblLog.ForeColor = Color.LightGray
         lblLog.Size = New Size(SIDE_W - 40, 220)
-        lblLog.Location = New Point(GoldMineGame.MINE_WIDTH + 30, 170)
+        lblLog.Location = New Point(GoldMineGame.MINE_WIDTH + 30, 232)
         Me.Controls.Add(lblLog)
+
+        BuildChatPanel(cardX, cardW)
 
         btnRestart = New Button()
         btnRestart.Text = "Choi Lai"
@@ -485,12 +515,110 @@ Public Class MineForm
         Me.Controls.Add(btnRestart)
     End Sub
 
+    ' Tao 1 the (card) thong tin nguoi choi: thanh mau | ten | diem | so phao
+    Private Function BuildPlayerCard(title As String, accent As Color, loc As Point, w As Integer, ByRef statsLabel As Label) As Panel
+        Dim p As New Panel()
+        p.Location = loc : p.Size = New Size(w, 58)
+        p.BackColor = Color.FromArgb(35, 35, 35)
+
+        ' Thanh mau doc ben trai
+        Dim bar As New Panel()
+        bar.Location = New Point(0, 0) : bar.Size = New Size(4, 58)
+        bar.BackColor = accent
+        p.Controls.Add(bar)
+
+        ' Ten nguoi choi
+        Dim lblTitle As New Label()
+        lblTitle.Text = title
+        lblTitle.Font = New Font("Segoe UI", 9.0!, FontStyle.Bold)
+        lblTitle.ForeColor = accent
+        lblTitle.Location = New Point(12, 4) : lblTitle.AutoSize = True
+        p.Controls.Add(lblTitle)
+
+        ' Dong diem so
+        statsLabel = New Label()
+        statsLabel.Font = New Font("Segoe UI", 9.0!)
+        statsLabel.ForeColor = Color.LightGray
+        statsLabel.Location = New Point(12, 20) : statsLabel.AutoSize = True
+        p.Controls.Add(statsLabel)
+
+        ' Dong phao (icon + so luong), mac dinh an khi chua co
+        Dim lblBombs As New Label()
+        lblBombs.Name = "lblBombs"
+        lblBombs.Font = New Font("Segoe UI", 9.0!)
+        lblBombs.ForeColor = Color.OrangeRed
+        lblBombs.Location = New Point(12, 38) : lblBombs.AutoSize = True
+        lblBombs.Text = ""
+        p.Controls.Add(lblBombs)
+
+        Return p
+    End Function
+
+    ' Khung chat: ListBox hien tin nhan + TextBox go + nut Gui (giong Form1.vb/TankGame.vb)
+    Private Sub BuildChatPanel(x As Integer, w As Integer)
+        pnlChat = New Panel()
+        pnlChat.Location = New Point(x, 232)
+        pnlChat.Size = New Size(w, GoldMineGame.MINE_HEIGHT - 232 - 70)
+        pnlChat.BackColor = Color.FromArgb(20, 20, 20)
+        pnlChat.Visible = False
+
+        lstChat = New ListBox()
+        lstChat.Location = New Point(0, 0)
+        lstChat.Size = New Size(w, pnlChat.Height - 32)
+        lstChat.BackColor = Color.FromArgb(35, 35, 35) : lstChat.ForeColor = Color.LightGray
+        lstChat.BorderStyle = BorderStyle.FixedSingle
+        pnlChat.Controls.Add(lstChat)
+
+        txtChatInput = New TextBox()
+        txtChatInput.Location = New Point(0, pnlChat.Height - 27)
+        txtChatInput.Size = New Size(w - 55, 25)
+        AddHandler txtChatInput.KeyDown, Sub(s As Object, ev As KeyEventArgs)
+            If ev.KeyCode = Keys.Enter Then
+                BtnSend_Click(s, EventArgs.Empty)
+                ev.Handled = True
+                ev.SuppressKeyPress = True
+            End If
+        End Sub
+        pnlChat.Controls.Add(txtChatInput)
+
+        btnSend = New Button()
+        btnSend.Text = "Gui"
+        btnSend.Location = New Point(w - 50, pnlChat.Height - 28)
+        btnSend.Size = New Size(50, 27)
+        btnSend.BackColor = Color.SteelBlue : btnSend.ForeColor = Color.White
+        btnSend.FlatStyle = FlatStyle.Flat
+        AddHandler btnSend.Click, AddressOf BtnSend_Click
+        pnlChat.Controls.Add(btnSend)
+
+        Me.Controls.Add(pnlChat)
+    End Sub
+
+    Private Sub BtnSend_Click(sender As Object, e As EventArgs)
+        If txtChatInput.Text.Trim() = "" Then Return
+        Dim tag As String = If(localPlayer = 0, "Player 1", "Player 2")
+        Dim msg As String = txtChatInput.Text.Trim()
+        AppendChat(tag & ": " & msg)
+        If isOnlineMode AndAlso peer IsNot Nothing AndAlso peer.IsConnected Then
+            peer.SendLine("CHAT:" & tag & ":" & msg)
+        End If
+        txtChatInput.Text = ""
+        txtChatInput.Focus()
+    End Sub
+
+    Private Sub AppendChat(msg As String)
+        If lstChat Is Nothing Then Return
+        lstChat.Items.Add(msg)
+        lstChat.TopIndex = Math.Max(0, lstChat.Items.Count - 1)
+    End Sub
+
     ' ============================================================
     '  BAT DAU / CHOI LAI
     ' ============================================================
     Private Sub StartGame(pCount As Integer, lv As Integer)
         playerCount = pCount
         startLevel = lv
+        lastLogShown = ""
+        If lstChat IsNot Nothing Then lstChat.Items.Clear()
         game = New GoldMineGame()
         game.ResetGame(pCount, lv)
         ShowGamePanel()
@@ -541,19 +669,56 @@ Public Class MineForm
 
     Private Sub RefreshSide()
         If game Is Nothing Then Return
+        UpdatePvpPanelsVisible()
+
+        Dim isTwoPlayer As Boolean = (playerCount = 2) OrElse isOnlineMode
         Dim secLeft As Integer = Math.Max(0, game.TimeLeftFrames \ GoldMineGame.TICK_FPS)
         lblTime.Text = "⏱ " & secLeft.ToString() & "s"
         lblTime.ForeColor = If(secLeft <= 10, Color.OrangeRed, Color.White)
         lblLevel.Text = "Man " & game.Level.ToString() & "/" & GoldMineGame.MAX_LEVEL.ToString() & "   Muc tieu: " & game.TargetScore.ToString()
 
-        lblScore0.Text = "Player 1: " & game.PlayerScore(0).ToString() & " diem   |  Phao: " & game.PlayerBombs(0).ToString()
-        If playerCount = 2 Then
-            lblScore1.Text = "Player 2: " & game.PlayerScore(1).ToString() & " diem   |  Phao: " & game.PlayerBombs(1).ToString()
-            lblScore1.Visible = True
-        Else
-            lblScore1.Visible = False
+        UpdateCard(pnlCard0, game.PlayerScore(0), game.PlayerBombs(0))
+        If isTwoPlayer Then
+            UpdateCard(pnlCard1, game.PlayerScore(1), game.PlayerBombs(1))
         End If
-        lblLog.Text = game.LastLog
+
+        If isTwoPlayer Then
+            If game.LastLog <> lastLogShown Then
+                If game.LastLog <> "" Then AppendChat("⚙ " & game.LastLog)
+                lastLogShown = game.LastLog
+            End If
+        Else
+            lblLog.Text = game.LastLog
+        End If
+    End Sub
+
+    ' Cap nhat dong diem + dong phao trong card
+    Private Sub UpdateCard(card As Panel, score As Integer, bombs As Integer)
+        If card Is Nothing Then Return
+        ' lblStats la Controls(2), lblBombs la Controls(3)
+        Dim st As Label = TryCast(card.Controls(2), Label)
+        If st IsNot Nothing Then st.Text = score.ToString() & " diem"
+
+        Dim lb As Label = Nothing
+        Dim i As Integer
+        For i = 0 To card.Controls.Count - 1
+            If card.Controls(i).Name = "lblBombs" Then
+                lb = TryCast(card.Controls(i), Label)
+                Exit For
+            End If
+        Next i
+        If lb Is Nothing Then Return
+
+        If bombs <= 0 Then
+            lb.Text = ""
+        ElseIf bombs <= 5 Then
+            ' Hien thi tung icon phao 🧨 x so luong
+            lb.Text = "🧨 x" & bombs.ToString() & "  (↑ de dung)"
+            lb.ForeColor = Color.OrangeRed
+        Else
+            lb.Text = "🧨 x" & bombs.ToString() & "  (↑ de dung)"
+            lb.ForeColor = Color.Gold
+        End If
     End Sub
 
     ' ============================================================
@@ -562,27 +727,36 @@ Public Class MineForm
     ' WinForms mac dinh coi phim mui ten la "dialog navigation key" va Panel se nuot mat
     ' truoc khi toi duoc Form_KeyDown, du da bat KeyPreview = True.
     ' Override ProcessCmdKey de chan bat truoc, dam bao Left/Right luon di chuyen duoc nhan vat.
+    ' Tra ve chi so player ma phim Trai/Phai/Len/Xuong/Space/Click se dieu khien:
+    ' - Online (PvP LAN): moi may chi co 1 nguoi choi tren ban phim rieng -> luon la localPlayer
+    ' - Offline 1P/2P cung may: phim mui ten luon la Player 1 (index 0)
+    Private Function MyMainPlayerIndex() As Integer
+        If isOnlineMode Then Return localPlayer
+        Return 0
+    End Function
+
     Protected Overrides Function ProcessCmdKey(ByRef msg As Message, keyData As Keys) As Boolean
         If game IsNot Nothing AndAlso Not game.GameOver Then
+            Dim myP As Integer = MyMainPlayerIndex()
             If keyData = Keys.Left Then
-                DoMove(0, -1)
+                DoMove(myP, -1)
                 Return True
             ElseIf keyData = Keys.Right Then
-                DoMove(0, 1)
+                DoMove(myP, 1)
                 Return True
             ElseIf keyData = Keys.Down Then
-                DoFire(0)
+                DoFire(myP)
                 Return True
             ElseIf keyData = Keys.Up Then
-                DoUseBomb(0)
+                DoUseBomb(myP)
                 Return True
-            ElseIf keyData = Keys.A AndAlso playerCount = 2 Then
+            ElseIf Not isOnlineMode AndAlso keyData = Keys.A AndAlso playerCount = 2 Then
                 DoMove(1, -1)
                 Return True
-            ElseIf keyData = Keys.D AndAlso playerCount = 2 Then
+            ElseIf Not isOnlineMode AndAlso keyData = Keys.D AndAlso playerCount = 2 Then
                 DoMove(1, 1)
                 Return True
-            ElseIf keyData = Keys.W AndAlso playerCount = 2 Then
+            ElseIf Not isOnlineMode AndAlso keyData = Keys.W AndAlso playerCount = 2 Then
                 DoUseBomb(1)
                 Return True
             End If
@@ -593,15 +767,15 @@ Public Class MineForm
     Private Sub MineForm_KeyDown(sender As Object, e As KeyEventArgs)
         If game Is Nothing OrElse game.GameOver Then Return
         If e.KeyCode = Keys.Space Then
-            DoFire(0)
-        ElseIf e.KeyCode = Keys.Enter AndAlso playerCount = 2 Then
+            DoFire(MyMainPlayerIndex())
+        ElseIf Not isOnlineMode AndAlso e.KeyCode = Keys.Enter AndAlso playerCount = 2 Then
             DoFire(1)
         End If
     End Sub
 
     Private Sub BoardPanel_MouseDown(sender As Object, e As MouseEventArgs)
         If game Is Nothing OrElse game.GameOver Then Return
-        DoFire(0)
+        DoFire(MyMainPlayerIndex())
     End Sub
 
     ' Goi tha moc: offline xu ly truc tiep, online gui lenh ve host
@@ -735,7 +909,7 @@ Public Class MineForm
             g.DrawLine(ropePen, baseX, baseY, tipX, tipY)
         End Using
 
-        DrawMiner(g, baseX, baseY, col)
+        DrawMiner(g, baseX, baseY, col, p)
 
         If spritesLoaded AndAlso clawSprite IsNot Nothing Then
             Dim angleDeg As Single = game.HookAngle(p) * 180.0F / CSng(Math.PI)
@@ -751,16 +925,20 @@ Public Class MineForm
         End If
     End Sub
 
-    ' Ve nhan vat (tho dao vang) dung tren mat dat, tay vuon ra cam day moc
-    Private Sub DrawMiner(g As Graphics, standX As Single, ropeY As Single, shirtCol As Color)
+    ' Ve nhan vat (tho dao vang) dung tren mat dat, tay vuon ra cam day moc.
+    ' p = chi so nguoi choi (0/1) de ve khac nhau chut it: non bao ho vs khan ran + ria mep,
+    ' mau quan khac nhau, de phan biet nhanh khong chi dua vao mau ao.
+    Private Sub DrawMiner(g As Graphics, standX As Single, ropeY As Single, shirtCol As Color, p As Integer)
         Dim feetY As Single = ropeY + 4
         Dim headR As Single = 9.0!
         Dim headCx As Single = standX
         Dim headCy As Single = feetY - 30
         Dim shoulderY As Single = headCy + headR + 2
 
+        Dim pantsCol As Color = If(p = 0, Color.FromArgb(60, 45, 35), Color.FromArgb(50, 40, 70))
+
         ' chan (2 que)
-        Using legPen As New Pen(Color.FromArgb(60, 45, 35), 4.0!)
+        Using legPen As New Pen(pantsCol, 4.0!)
             g.DrawLine(legPen, standX - 4, feetY - 14, standX - 6, feetY)
             g.DrawLine(legPen, standX + 4, feetY - 14, standX + 6, feetY)
         End Using
@@ -779,14 +957,38 @@ Public Class MineForm
             g.DrawLine(armPen, standX, shoulderY + 3, standX, ropeY)
         End Using
 
-        ' dau (mau da) + non bao ho
+        ' dau (mau da)
         Using skinBrush As New SolidBrush(Color.FromArgb(255, 214, 170))
             g.FillEllipse(skinBrush, headCx - headR, headCy - headR, headR * 2, headR * 2)
         End Using
-        Using helmetBrush As New SolidBrush(Color.FromArgb(230, 190, 30))
-            g.FillPie(helmetBrush, headCx - headR - 1, headCy - headR - 1, headR * 2 + 2, headR * 2 + 2, 180, 180)
-            g.FillRectangle(helmetBrush, headCx - headR - 1, headCy - 1, headR * 2 + 2, 2)
-        End Using
+
+        If p = 0 Then
+            ' Player 1: non bao ho vang, mat sach
+            Using helmetBrush As New SolidBrush(Color.FromArgb(230, 190, 30))
+                g.FillPie(helmetBrush, headCx - headR - 1, headCy - headR - 1, headR * 2 + 2, headR * 2 + 2, 180, 180)
+                g.FillRectangle(helmetBrush, headCx - headR - 1, headCy - 1, headR * 2 + 2, 2)
+            End Using
+            Using lampBrush As New SolidBrush(Color.FromArgb(255, 250, 200))
+                g.FillEllipse(lampBrush, headCx - 2.2F, headCy - headR - 2.5F, 4.4F, 4.4F)
+            End Using
+        Else
+            ' Player 2: khan ran do buoc dau + ria mep, khong doi non bao ho
+            Using bandanaBrush As New SolidBrush(Color.FromArgb(200, 45, 40))
+                g.FillPie(bandanaBrush, headCx - headR - 1, headCy - headR - 1, headR * 2 + 2, headR * 2 + 2, 190, 160)
+                g.FillRectangle(bandanaBrush, headCx - headR - 1, headCy - 2, headR * 2 + 2, 3)
+            End Using
+            ' 2 duoi khan bay phia sau
+            Using knotPen As New Pen(Color.FromArgb(200, 45, 40), 2.2!)
+                g.DrawLine(knotPen, headCx + headR - 1, headCy - 1, headCx + headR + 5, headCy + 3)
+                g.DrawLine(knotPen, headCx + headR - 1, headCy + 2, headCx + headR + 4, headCy + 7)
+            End Using
+            ' ria mep
+            Using mustachePen As New Pen(Color.FromArgb(70, 45, 30), 1.8!)
+                g.DrawLine(mustachePen, headCx - 4.5F, headCy + 3.5F, headCx - 1.0F, headCy + 2.7F)
+                g.DrawLine(mustachePen, headCx + 4.5F, headCy + 3.5F, headCx + 1.0F, headCy + 2.7F)
+            End Using
+        End If
+
         Using outlinePen As New Pen(Color.FromArgb(60, 45, 10), 1.0!)
             g.DrawEllipse(outlinePen, headCx - headR, headCy - headR, headR * 2, headR * 2)
         End Using

@@ -12,7 +12,7 @@ Public Class GoldMineGame
     Public Const ROUND_SECONDS As Integer = 90
     Public Const MAX_PLAYERS As Integer = 2
     Public Const TICK_FPS As Integer = 30   ' so tick/giay gia dinh (dung de tinh TimeLeftFrames)
-    Public Const MAX_LEVEL As Integer = 3
+    Public Const MAX_LEVEL As Integer = 5
 
     Public Enum ItemKind As Byte
         GoldSmall = 0
@@ -139,7 +139,9 @@ Public Class GoldMineGame
         Select Case lv
             Case 1 : Return 300
             Case 2 : Return 500
-            Case Else : Return 800
+            Case 3 : Return 800
+            Case 4 : Return 1200
+            Case Else : Return 1700
         End Select
     End Function
 
@@ -147,15 +149,19 @@ Public Class GoldMineGame
         Select Case lv
             Case 1 : Return 90
             Case 2 : Return 80
-            Case Else : Return 70
+            Case 3 : Return 70
+            Case 4 : Return 65
+            Case Else : Return 60
         End Select
     End Function
 
     Private Function GetSwingSpeedForLevel() As Single
         Select Case Level
             Case 1 : Return SWING_SPEED
-            Case 2 : Return SWING_SPEED * 1.35!
-            Case Else : Return SWING_SPEED * 1.7!
+            Case 2 : Return SWING_SPEED * 1.25!
+            Case 3 : Return SWING_SPEED * 1.5!
+            Case 4 : Return SWING_SPEED * 1.7!
+            Case Else : Return SWING_SPEED * 1.9!
         End Select
     End Function
 
@@ -190,17 +196,20 @@ Public Class GoldMineGame
     Private Function MakeRandomItem() As MineItem
         Dim it As New MineItem()
         Dim roll As Integer = rng.Next(100)
-        ' Cang len man cao, vang nho/da/tnt xuat hien nhieu hon, vang to/kim cuong hiem hon
-        Dim rockBonus As Integer = (Level - 1) * 6      ' +6%/+12% o man 2/3
-        Dim boxBonus As Integer = (Level - 1) * 3
-        If roll < 28 - (Level - 1) * 3 Then
+        ' Cang len man cao, vang nho/da xuat hien nhieu hon, vang to/kim cuong hiem hon.
+        ' itemDiff chi cap toi da bang muc man 3 cu, de khong lam tran nguong % (qua man 4-5
+        ' van kho hon nho diem muc tieu cao hon, thoi gian it hon va moc du nhanh hon).
+        Dim itemDiff As Integer = Math.Min(Level - 1, 2)
+        Dim rockBonus As Integer = itemDiff * 6
+        Dim boxBonus As Integer = itemDiff * 3
+        If roll < 28 - itemDiff * 3 Then
             it.Kind = ItemKind.GoldSmall : it.Radius = 14 : it.Weight = 1.0! : it.Value = 50
-        ElseIf roll < 48 - (Level - 1) * 4 Then
+        ElseIf roll < 48 - itemDiff * 4 Then
             it.Kind = ItemKind.GoldMedium : it.Radius = 20 : it.Weight = 2.0! : it.Value = 120
-        ElseIf roll < 58 - (Level - 1) * 4 Then
+        ElseIf roll < 58 - itemDiff * 4 Then
             it.Kind = ItemKind.GoldLarge : it.Radius = 30 : it.Weight = 4.0! : it.Value = 300
         ElseIf roll < 75 + rockBonus Then
-            it.Kind = ItemKind.Rock : it.Radius = 22 : it.Weight = 3.0! + (Level - 1) * 0.6! : it.Value = 10
+            it.Kind = ItemKind.Rock : it.Radius = 22 : it.Weight = 3.0! + (Level - 1) * 0.4! : it.Value = 10
         ElseIf roll < 85 + rockBonus Then
             it.Kind = ItemKind.DiamondSmall : it.Radius = 12 : it.Weight = 0.6! : it.Value = 200
         ElseIf roll < 90 + rockBonus Then
